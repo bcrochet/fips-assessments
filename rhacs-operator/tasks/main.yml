@@ -1,0 +1,121 @@
+---
+- name: Testing Red Hat Advanced Cluster Security
+  block:
+    - name: Create stackrox central services
+      kubernetes.core.k8s:
+        name: stackrox-central-services
+        namespace: "{{ target_namespace }}"
+        api_version: platform.stackrox.io/v1alpha1
+        kind: Central
+        definition:
+          metadata:
+            labels:
+              opdev: opcap
+          spec:
+            central:
+              exposure:
+                route:
+                  enabled: true
+        wait: true
+        wait_condition:
+          status: "True"
+          type: "Deployed"
+        wait_timeout: 90
+        state: present
+    - name: Get Central Secret Password
+      kubernetes.core.k8s_info:
+        namespace: "{{ target_namespace }}"
+        name: central-htpasswd
+        api_version: v1
+        kind: Secret
+      register: central_secret
+    - name: Get Central Endpoint
+      kubernetes.core.k8s_info:
+        namespace: "{{ target_namespace }}"
+        name: central
+        api_version: v1
+        kind: Route
+      register: route
+    - name: Wait for central service to be fully available
+      ansible.builtin.uri:
+        url: "https://{{ route.resources[0].spec.host }}:443/v1/ping"
+        follow_redirects: none
+        method: GET
+        validate_certs: false
+      register: _result
+      until: _result.status == 200
+      retries: 30
+      delay: 5 # Every 5 seconds
+    - name: Generate init-bundle
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/roxctl
+          - central
+          - init-bundles
+          - generate
+          - -e
+          - "https://{{ route.resources[0].spec.host }}:443"
+          - --insecure-skip-tls-verify
+          - -p
+          - "{{ central_secret.resources[0].data.password | b64decode }}"
+          - main-init-bundle
+          - --output-secrets
+          - "-"
+      register: roxctl_cmd
+    - name: Apply init bundle file
+      kubernetes.core.k8s:
+        apply: true
+        namespace: "{{ target_namespace }}"
+        definition: "{{ roxctl_cmd.stdout | from_yaml_all }}"
+    - name: Create stackrox secured cluster services
+      kubernetes.core.k8s:
+        name: stackrox-secured-cluster-services
+        namespace: "{{ target_namespace }}"
+        api_version: platform.stackrox.io/v1alpha1
+        kind: SecuredCluster
+        definition:
+          metadata:
+            labels:
+              opdev: opcap
+          spec:
+            clusterName: my-cluster
+        wait: true
+        wait_condition:
+          status: "True"
+          type: "Deployed"
+        wait_timeout: 90
+        state: present
+  rescue:
+    - name: Print when failed
+      ansible.builtin.debug:
+        msg: "RHACS components creation failed. Err: {{ ansible_failed_result }}"
+  always:
+    - name: Report result
+      ansible.builtin.set_fact:
+        assessment_result: "{{ 'fail' if ansible_failed_result is defined else 'pass' }}"
+- name: Clean Up RHACS components
+  block:
+    - name: Delete stackrox secured cluster services
+      kubernetes.core.k8s:
+        name: stackrox-secured-cluster-services
+        namespace: "{{ target_namespace }}"
+        api_version: platform.stackrox.io/v1alpha1
+        kind: SecuredCluster
+        state: absent
+        wait: true
+    - name: Delete stackrox central services
+      kubernetes.core.k8s:
+        name: stackrox-central-services
+        namespace: "{{ target_namespace }}"
+        api_version: platform.stackrox.io/v1alpha1
+        kind: Central
+        state: absent
+        wait: true
+    - name: Delete init bundle file
+      ansible.builtin.file:
+        path: /tmp/init_bundle.yml
+        state: absent
+  rescue:
+    - name: Print when failed
+      ansible.builtin.debug:
+        msg: "Error: Couldn't delete RHACS components. Err: {{ ansible_failed_result }}"

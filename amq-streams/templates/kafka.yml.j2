@@ -9,7 +9,7 @@ spec:
   kafka:
     config:
       default.replication.factor: 3
-      inter.broker.protocol.version: '3.2'
+      inter.broker.protocol.version: '3.4'
       min.insync.replicas: 2
       offsets.topic.replication.factor: 3
       transaction.state.log.min.isr: 2
@@ -26,19 +26,8 @@ spec:
     replicas: 3
     storage:
       type: ephemeral
-    version: 3.2.3
+    version: 3.4.0
   zookeeper:
     replicas: 3
     storage:
       type: ephemeral
-# on fips enabled rosa this is the error that you get, until you do the WA in
-# https://access.redhat.com/documentation/en-us/red_hat_amq_streams/2.3/html-single/configuring_amq_streams_on_openshift/index#proc-configuring-fips-mode-cluster-operator-str
-status:
-  conditions:
-    - lastTransitionTime: '2023-05-08T08:09:40.357185Z'
-      message: >-
-        java.io.IOException: getPBEAlgorithmParameters failed:
-        PBEWithHmacSHA256AndAES_256 AlgorithmParameters not available
-      reason: RuntimeException
-      status: 'True'
-      type: NotReady
